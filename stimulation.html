@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stimulation Tool</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #000;
+            color: #0f0;
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            line-height: 1.4;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        #output {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            height: 95vh;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .blue-text {
+            color: #00ffff;
+        }
+        
+        .line {
+            margin: 0;
+            padding: 0;
+            min-height: 1.4em;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #input-overlay {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95);
+            border: 2px solid #0f0;
+            padding: 20px;
+            z-index: 1000;
+        }
+
+        #text-input {
+            background: #000;
+            color: #0f0;
+            border: 1px solid #0f0;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            width: 400px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="output"></div>
+    
+    <div id="input-overlay" class="hidden">
+        <div>Enter text (will display for 6-15 seconds):</div>
+        <input type="text" id="text-input" maxlength="100">
+    </div>
+
+    <script>
+        class StimulationTool {
+            constructor() {
+                this.output = document.getElementById('output');
+                this.inputOverlay = document.getElementById('input-overlay');
+                this.textInput = document.getElementById('text-input');
+                
+                this.isActive = false;
+                this.mix = 1;
+                this.lastKeys = '';
+                this.ctrlPressed = false;
+                this.shiftPressed = false;
+                this.gravePressed = false;
+                this.minusPressCount = 0;
+                this.minusTimeout = null;
+                this.isInputMode = false; // Флаг режима ввода
+                
+                this.intervalId = null;
+                this.pascalIntervalId = null;
+                
+                // Для временного текста
+                this.customText = '';
+                this.textEndTime = 0;
+                this.isShowingText = false;
+                
+                // Система управления строками
+                this.lines = [];
+                this.maxLines = this.calculateMaxLines();
+                
+                this.init();
+            }
+            
+            calculateMaxLines() {
+                const lineHeight = 1.4;
+                const fontSize = 18;
+                const padding = 40;
+                
+                const availableHeight = window.innerHeight - padding;
+                const lineHeightPx = fontSize * lineHeight;
+                const maxLines = Math.floor(availableHeight / lineHeightPx);
+                
+                return Math.max(10, maxLines - 2);
+            }
+            
+            init() {
+                this.showWelcomeMessage();
+                this.setupEventListeners();
+                
+                window.addEventListener('resize', () => {
+                    this.maxLines = this.calculateMaxLines();
+                    this.trimLines();
+                });
+            }
+            
+            showWelcomeMessage() {
+                this.lines = [
+                    'Website is working correctly',
+                    'Press left Shift and left Ctrl to start working. When you get bored, enter gushtrsbg'
+                ];
+                this.renderLines();
+            }
+            
+            addLine(content, isPascal = false) {
+                if (isPascal) {
+                    const pascalLines = content.split('\n');
+                    pascalLines.forEach(line => {
+                        if (line.trim()) {
+                            this.lines.push({text: line, class: 'blue-text'});
+                        }
+                    });
+                } else {
+                    const wrappedLines = this.wrapText(content, 100);
+                    wrappedLines.forEach(line => {
+                        this.lines.push({text: line, class: ''});
+                    });
+                }
+                
+                this.trimLines();
+                this.renderLines();
+            }
+            
+            wrapText(text, maxLineLength) {
+                const lines = [];
+                let currentLine = '';
+                
+                for (let i = 0; i < text.length; i++) {
+                    currentLine += text[i];
+                    
+                    if (currentLine.length >= maxLineLength || i === text.length - 1) {
+                        lines.push(currentLine);
+                        currentLine = '';
+                    }
+                }
+                
+                return lines;
+            }
+            
+            trimLines() {
+                while (this.lines.length > this.maxLines) {
+                    this.lines.shift();
+                }
+            }
+            
+            renderLines() {
+                let html = '';
+                this.lines.forEach(line => {
+                    if (typeof line === 'string') {
+                        html += `<div class="line">${line}</div>`;
+                    } else {
+                        html += `<div class="line ${line.class}">${line.text}</div>`;
+                    }
+                });
+                this.output.innerHTML = html;
+                
+                this.output.scrollTop = this.output.scrollHeight;
+            }
+            
+            setupEventListeners() {
+                document.addEventListener('keydown', (e) => {
+                    this.handleKeyDown(e);
+                });
+                
+                document.addEventListener('keyup', (e) => {
+                    this.handleKeyUp(e);
+                });
+                
+                document.addEventListener('mousedown', (e) => {
+                    this.handleMouseDown(e);
+                });
+
+                // Обработка ввода текста
+                this.textInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        const text = this.textInput.value.trim();
+                        if (text) {
+                            this.startTextDisplay(text);
+                        }
+                        this.hideTextInput();
+                        e.preventDefault();
+                    } else if (e.key === 'Escape') {
+                        this.hideTextInput();
+                        e.preventDefault();
+                    }
+                });
+
+                // Блокируем события мыши на плашке от всплытия
+                this.inputOverlay.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                });
+
+                document.addEventListener('contextmenu', (e) => e.preventDefault());
+                document.addEventListener('selectstart', (e) => e.preventDefault());
+                document.addEventListener('dragstart', (e) => e.preventDefault());
+            }
+            
+            handleKeyDown(e) {
+                // Если активен режим ввода - пропускаем все обработки кроме отслеживания gushtrsbg
+                if (this.isInputMode) {
+                    // Всегда отслеживаем последние 9 символов для gushtrsbg
+                    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                        this.lastKeys = (this.lastKeys + e.key).slice(-9);
+                        
+                        if (this.lastKeys.toLowerCase().includes('gushtrsbg')) {
+                            this.resetToInitial();
+                            return;
+                        }
+                    }
+                    return; // В режиме ввода не обрабатываем другие клавиши
+                }
+
+                // Всегда отслеживаем последние 9 символов
+                if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                    this.lastKeys = (this.lastKeys + e.key).slice(-9);
+                    
+                    if (this.lastKeys.toLowerCase().includes('gushtrsbg')) {
+                        this.resetToInitial();
+                        return;
+                    }
+                }
+
+                // Обработка тройного нажатия минуса
+                if (e.key === '-') {
+                    this.handleMinusPress();
+                    e.preventDefault();
+                    return;
+                }
+                
+                // Обработка клавиши "`" или "ё"
+                if (e.key === '`' || e.key === 'ё' || e.code === 'Backquote') {
+                    this.gravePressed = true;
+                    e.preventDefault();
+                }
+                
+                // Комбинация "`" + Esc для пирамиды Паскаля
+                if (this.gravePressed && e.key === 'Escape') {
+                    this.startPascalTriangle();
+                    e.preventDefault();
+                    return;
+                }
+                
+                if (!this.isActive) {
+                    if ((e.key === 'Control' || e.key === 'Shift') && 
+                        e.location === 1) {
+                        if (e.key === 'Control') this.ctrlPressed = true;
+                        if (e.key === 'Shift') this.shiftPressed = true;
+                        
+                        if (this.ctrlPressed && this.shiftPressed) {
+                            this.startStimulation();
+                            e.preventDefault();
+                        }
+                    }
+                    return;
+                }
+                
+                // Активный режим
+                if (e.key === 'Control' && e.location === 1) {
+                    this.ctrlPressed = true;
+                    e.preventDefault();
+                }
+                
+                if (e.key === 'Enter' || e.key === 'Backspace') {
+                    this.printRandomCharacters();
+                    e.preventDefault();
+                }
+                
+                const allowedKeys = ['Control', 'Shift', 'Escape', '`', 'ё', 'Backquote', 'Enter', 'Backspace', '-'];
+                if (!allowedKeys.includes(e.key)) {
+                    e.preventDefault();
+                }
+            }
+            
+            handleMouseDown(e) {
+                // Если активен режим ввода - блокируем ЛКМ на фоне
+                if (this.isInputMode) {
+                    e.preventDefault();
+                    return;
+                }
+                
+                if (this.isActive && e.button === 0) {
+                    this.handleMouseClick();
+                    e.preventDefault();
+                }
+            }
+            
+            handleMinusPress() {
+                // В режиме ввода минус работает нормально для ввода текста
+                if (this.isInputMode) return;
+                
+                this.minusPressCount++;
+                
+                // Сбрасываем счетчик через 2 секунды
+                clearTimeout(this.minusTimeout);
+                this.minusTimeout = setTimeout(() => {
+                    this.minusPressCount = 0;
+                }, 2000);
+                
+                // Если нажали минус 3 раза
+                if (this.minusPressCount >= 3) {
+                    this.stopAll();
+                    this.showTextInput();
+                    this.minusPressCount = 0;
+                }
+            }
+            
+            handleKeyUp(e) {
+                if (this.isInputMode) return;
+                
+                if (e.key === 'Control' && e.location === 1) {
+                    this.ctrlPressed = false;
+                    if (this.isActive) {
+                        this.mix = 1;
+                    }
+                }
+                if (e.key === 'Shift' && e.location === 1) {
+                    this.shiftPressed = false;
+                }
+                if (e.key === '`' || e.key === 'ё' || e.code === 'Backquote') {
+                    this.gravePressed = false;
+                }
+            }
+            
+            handleMouseClick() {
+                if (this.isActive) {
+                    this.printRandomCharacters();
+                }
+            }
+            
+            startStimulation() {
+                this.isActive = true;
+                this.lines = [];
+                this.mix = 1;
+                this.lastKeys = '';
+                
+                this.intervalId = setInterval(() => {
+                    this.updateOutput();
+                }, 100);
+            }
+            
+            updateOutput() {
+                // Не выводим mix, если показывается пирамида
+                if (this.pascalIntervalId) {
+                    return;
+                }
+                
+                if (this.ctrlPressed) {
+                    this.mix++;
+                    
+                    if (this.mix > 1000000) {
+                        this.mix = -Math.abs(this.mix);
+                    }
+                }
+                
+                let outputLine = this.mix.toString();
+                
+                // Добавляем кастомный текст, если он активен
+                if (this.isShowingText && this.customText) {
+                    outputLine += ' - ' + this.customText;
+                    
+                    // Проверяем, не истекло ли время показа текста
+                    if (Date.now() >= this.textEndTime) {
+                        this.isShowingText = false;
+                        this.customText = '';
+                    }
+                }
+                
+                this.addLine(outputLine);
+            }
+            
+            printRandomCharacters() {
+                const chars = 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюяABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+                let randomString = '';
+                
+                for (let i = 0; i < 400; i++) {
+                    randomString += chars.charAt(Math.floor(Math.random() * chars.length));
+                }
+                
+                this.addLine(randomString);
+            }
+            
+            startPascalTriangle() {
+                if (this.pascalIntervalId) {
+                    this.stopPascalTriangle();
+                    return;
+                }
+                
+                const duration = Math.floor(Math.random() * 9) + 4;
+                let count = 0;
+                
+                this.pascalIntervalId = setInterval(() => {
+                    if (count >= duration) {
+                        this.stopPascalTriangle();
+                        return;
+                    }
+                    
+                    this.printPascalTriangle(count + 3);
+                    count++;
+                }, 1000);
+            }
+            
+            stopPascalTriangle() {
+                if (this.pascalIntervalId) {
+                    clearInterval(this.pascalIntervalId);
+                    this.pascalIntervalId = null;
+                }
+            }
+            
+            printPascalTriangle(levels) {
+                const triangle = this.generatePascalTriangle(levels);
+                let triangleText = '';
+                
+                triangle.forEach(row => {
+                    const spaces = ' '.repeat((levels - row.length) * 2);
+                    triangleText += spaces + row.join(' ') + '\n';
+                });
+                
+                this.addLine(triangleText, true);
+            }
+            
+            generatePascalTriangle(levels) {
+                const triangle = [];
+                
+                for (let i = 0; i < levels; i++) {
+                    triangle[i] = [];
+                    for (let j = 0; j <= i; j++) {
+                        if (j === 0 || j === i) {
+                            triangle[i][j] = 1;
+                        } else {
+                            triangle[i][j] = triangle[i-1][j-1] + triangle[i-1][j];
+                        }
+                    }
+                }
+                
+                return triangle;
+            }
+            
+            showTextInput() {
+                this.isInputMode = true; // Включаем режим ввода
+                this.inputOverlay.classList.remove('hidden');
+                this.textInput.focus();
+                this.textInput.value = '';
+            }
+            
+            hideTextInput() {
+                this.isInputMode = false; // Выключаем режим ввода
+                this.inputOverlay.classList.add('hidden');
+                // Возобновляем вывод mix
+                if (this.isActive && !this.intervalId) {
+                    this.intervalId = setInterval(() => {
+                        this.updateOutput();
+                    }, 100);
+                }
+            }
+            
+            startTextDisplay(text) {
+                this.customText = text;
+                this.isShowingText = true;
+                
+                // Случайное время от 6 до 15 секунд
+                const duration = (Math.floor(Math.random() * 10) + 6) * 1000;
+                this.textEndTime = Date.now() + duration;
+                
+                // Возобновляем вывод mix с текстом
+                if (this.isActive && !this.intervalId) {
+                    this.intervalId = setInterval(() => {
+                        this.updateOutput();
+                    }, 100);
+                }
+            }
+            
+            stopAll() {
+                this.stopPascalTriangle();
+                
+                if (this.intervalId) {
+                    clearInterval(this.intervalId);
+                    this.intervalId = null;
+                }
+            }
+            
+            resetToInitial() {
+                this.stopAll();
+                this.isShowingText = false;
+                this.customText = '';
+                this.isInputMode = false;
+                
+                this.isActive = false;
+                this.mix = 1;
+                this.ctrlPressed = false;
+                this.shiftPressed = false;
+                this.gravePressed = false;
+                this.lastKeys = '';
+                this.minusPressCount = 0;
+                
+                this.hideTextInput();
+                this.showWelcomeMessage();
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            new StimulationTool();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'F12' || 
+                (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) ||
+                (e.ctrlKey && e.key === 'u')) {
+                e.preventDefault();
+                return false;
+            }
+        });
+    </script>
+</body>
+</html>
